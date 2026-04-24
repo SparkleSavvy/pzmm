@@ -43,7 +43,7 @@ QProgressBar::chunk { background-color: #a6e3a1; }
 
 # ================= ЛОКАЛИЗАЦИЯ =================
 DEFAULT_LANG = {
-    "app_title": "pzmm",
+    "app_title": "🌸 Project Zomboid Mod Manager",
     "btn_settings": "⚙️ Настройки",
     "tab_workshop": "🌐 Мастерская",
     "tab_mods": "📦 Установленные моды",
@@ -285,7 +285,7 @@ class DownloadWorker(QThread):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(tr("app_title"))
+        self.setWindowTitle(tr("PZMM"))
         self.resize(1200, 750)
         self.setStyleSheet(DARK_STYLESHEET)
         self.cons = ConsoleWindow(self)
