@@ -1,6 +1,14 @@
 # pzmm
 FOSS Mod manager for Project Zomboid
 
+# Features
+- Download multiple mods
+- Update mods
+- Remove selected or all mods
+- View installed mods and dependencies
+- Configure directories
+- Miscellaneous quality-of-life features
+
 # How to use
 > [!NOTE]
 > You must have installed python, steamcmd!
