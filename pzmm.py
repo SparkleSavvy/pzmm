@@ -43,7 +43,7 @@ QProgressBar::chunk { background-color: #a6e3a1; }
 
 # ================= ЛОКАЛИЗАЦИЯ =================
 DEFAULT_LANG = {
-    "app_title": "🧟 Project Zomboid Mod Manager",
+    "app_title": "pzmm",
     "btn_settings": "⚙️ Настройки",
     "tab_workshop": "🌐 Мастерская",
     "tab_mods": "📦 Установленные моды",
