@@ -24,5 +24,5 @@ py pzmm.py
 # Languages
 | Name      | Supported |
 | --------- | --------- |
-| English   | ❌        |
+| English   | ❌ (WIP)  |
 | Russian   | ☑️        |
