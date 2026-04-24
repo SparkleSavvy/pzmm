@@ -1,5 +1,6 @@
 # pzmm
 FOSS Mod manager for Project Zomboid
+<img width="1484" height="1029" alt="image" src="https://github.com/user-attachments/assets/1fb254dd-edb9-4019-be69-d01ed1149dcb" />
 
 # Features
 - Download multiple mods
