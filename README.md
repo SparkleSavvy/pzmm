@@ -3,7 +3,7 @@ FOSS Mod manager for Project Zomboid
 
 # How to use
 > [!NOTE]
-> You can have installed python!
+> You must have installed python, steamcmd!
 1. Install depencies
 ```
 pip install PyQt6 PyQt6-WebEngine requests
