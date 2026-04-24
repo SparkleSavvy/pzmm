@@ -12,8 +12,13 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
 
-SETTINGS_FILE = "settings.json"
-LOCALES_DIR = "locales"
+# --- НАСТРОЙКИ ---
+def get_base_dir():
+    if getattr(sys, 'frozen', False): return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+SETTINGS_FILE = os.path.join(get_base_dir(), "settings.json")
+LOCALES_DIR = os.path.join(get_base_dir(), "locales")
 PZ_APP_ID = "108600"
 
 # --- Темная тема (QSS) ---
@@ -47,6 +52,7 @@ DEFAULT_LANG = {
     "btn_settings": "⚙️ Настройки",
     "tab_workshop": "🌐 Мастерская",
     "tab_mods": "📦 Установленные моды",
+    "tab_trouble": "🛠️ Траблшутинг",
     "btn_nav_go": "Перейти",
     "btn_add_queue": "➕ В очередь",
     "btn_rem_queue": "Убрать из очереди",
@@ -79,7 +85,7 @@ DEFAULT_LANG = {
     "set_steamcmd": "steamcmd.exe:",
     "set_ws": "Папка Workshop (108600):",
     "set_game": "Папка Zomboid/mods:",
-    "set_auto": "Авто-установка в игру после скачивания",
+    "set_auto": "Авто-установка в игру",
     "set_lang": "Язык интерфейса:",
     "set_save": "💾 Сохранить",
     "cons_title": "Выполнение задач",
@@ -89,7 +95,16 @@ DEFAULT_LANG = {
     "log_err_st": "Ошибка SteamCMD: {e}",
     "log_ok_inst": "✅ Установлен: {sub}",
     "log_err_inst": "❌ Ошибка копирования {sub}: {e}",
-    "log_done": "\n=== ГОТОВО ==="
+    "log_done": "\n=== ГОТОВО ===",
+    "trb_analyze": "🔍 Анализ console.txt",
+    "trb_clear_lua": "🧹 Очистить кэш Lua (Фикс UI)",
+    "trb_clear_logs": "🗑️ Удалить старые логи",
+    "trb_log_title": "Анализ логов игры (Ошибки и конфликты):",
+    "trb_no_log": "Файл console.txt не найден. Запустите игру хотя бы один раз.",
+    "trb_no_errors": "✅ Ошибок Lua или крашей в последней сессии не найдено! Игра работает стабильно.",
+    "trb_found_errors": "⚠️ НАЙДЕНЫ ОШИБКИ ({count} шт.):\nВозможно конфликтуют моды.\n\n",
+    "trb_lua_ok": "Папка Lua кэша успешно удалена. При следующем запуске игры интерфейс пересоберется с нуля.",
+    "trb_logs_ok": "Старые логи игры успешно удалены. Освобождено место на диске."
 }
 
 LANG_DICT = {}
@@ -111,8 +126,7 @@ def load_language(lang_code="ru"):
         with open(lang_path, 'r', encoding='utf-8') as f:
             global LANG_DICT
             LANG_DICT = json.load(f)
-    else:
-        LANG_DICT = DEFAULT_LANG
+    else: LANG_DICT = DEFAULT_LANG
 
 def get_available_languages():
     if not os.path.exists(LOCALES_DIR): return ["ru"]
@@ -173,6 +187,10 @@ class SettingsDialog(QDialog):
         self.ws_inp = add_row(tr("set_ws"), "workshop_path", self.br_d)
         self.gm_inp = add_row(tr("set_game"), "game_mods_path", self.br_d)
 
+        self.auto_cb = QCheckBox(tr("set_auto"))
+        self.auto_cb.setChecked(self.settings.get("auto_install", True))
+        layout.addWidget(self.auto_cb)
+
         lang_lay = QHBoxLayout()
         self.lang_cb = QComboBox()
         self.lang_cb.addItems(get_available_languages())
@@ -180,10 +198,6 @@ class SettingsDialog(QDialog):
         lang_lay.addWidget(QLabel(tr("set_lang")))
         lang_lay.addWidget(self.lang_cb)
         layout.addLayout(lang_lay)
-        
-        self.auto_cb = QCheckBox(tr("set_auto"))
-        self.auto_cb.setChecked(self.settings.get("auto_install", True))
-        layout.addWidget(self.auto_cb)        
 
         sv_btn = QPushButton(tr("set_save"))
         sv_btn.setObjectName("SuccessBtn")
@@ -291,7 +305,7 @@ class MainWindow(QMainWindow):
         self.cons = ConsoleWindow(self)
 
         self.prof = QWebEngineProfile.defaultProfile()
-        self.prof.setPersistentStoragePath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "browser_data"))
+        self.prof.setPersistentStoragePath(os.path.join(get_base_dir(), "browser_data"))
         self.prof.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
 
         cen = QWidget()
@@ -308,9 +322,12 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         lay.addWidget(self.tabs)
+        
         self.init_ws_tab()
         self.init_mod_tab()
+        self.init_trouble_tab() # НОВАЯ ВКЛАДКА
 
+    # --- Вкладка 1: Мастерская ---
     def init_ws_tab(self):
         t = QWidget()
         lay = QVBoxLayout(t)
@@ -346,6 +363,7 @@ class MainWindow(QMainWindow):
     def inj_js(self, ok):
         if ok: self.bw.page().runJavaScript("var b=document.getElementById('cookie_prefs_popup_background'),p=document.getElementById('cookie_prefs_popup');if(b)b.style.display='none';if(p)p.style.display='none';document.body.style.overflow='auto';")
 
+    # --- Вкладка 2: Моды ---
     def init_mod_tab(self):
         t = QWidget(); lay = QVBoxLayout(t)
         top = QHBoxLayout()
@@ -369,6 +387,104 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(t, tr("tab_mods"))
         self.ld_mods()
 
+    # --- Вкладка 3: Траблшутинг (НОВАЯ) ---
+    def init_trouble_tab(self):
+        t = QWidget()
+        lay = QVBoxLayout(t)
+        
+        # Кнопки быстрых действий
+        actions_lay = QHBoxLayout()
+        
+        btn_analyze = QPushButton(tr("trb_analyze"))
+        btn_analyze.setObjectName("ActionBtn")
+        btn_analyze.clicked.connect(self.analyze_logs)
+        
+        btn_clear_lua = QPushButton(tr("trb_clear_lua"))
+        btn_clear_lua.setObjectName("WarnBtn")
+        btn_clear_lua.clicked.connect(self.clear_lua_cache)
+        
+        btn_clear_logs = QPushButton(tr("trb_clear_logs"))
+        btn_clear_logs.setObjectName("DangerBtn")
+        btn_clear_logs.clicked.connect(self.clear_game_logs)
+        
+        actions_lay.addWidget(btn_analyze)
+        actions_lay.addWidget(btn_clear_lua)
+        actions_lay.addWidget(btn_clear_logs)
+        actions_lay.addStretch()
+        
+        # Окно вывода логов
+        self.trouble_console = QTextEdit()
+        self.trouble_console.setReadOnly(True)
+        self.trouble_console.setStyleSheet("background-color: #11111b; color: #cdd6f4; font-family: Consolas; font-size: 13px;")
+        
+        lay.addLayout(actions_lay)
+        lay.addWidget(QLabel(tr("trb_log_title")))
+        lay.addWidget(self.trouble_console)
+        
+        self.tabs.addTab(t, tr("tab_trouble"))
+
+    # --- Логика Траблшутинга ---
+    def analyze_logs(self):
+        self.trouble_console.clear()
+        zomboid_dir = os.path.expanduser(r"~\Zomboid")
+        console_path = os.path.join(zomboid_dir, "console.txt")
+        
+        if not os.path.exists(console_path):
+            self.trouble_console.append(f"<span style='color: yellow;'>{tr('trb_no_log')}</span>")
+            return
+            
+        errors_found = []
+        try:
+            # Читаем только последние 10000 строк, чтобы не повесить UI
+            with open(console_path, 'r', encoding='utf-8', errors='replace') as f:
+                lines = f.readlines()[-10000:]
+                
+            for line in lines:
+                # Ищем критические маркеры ошибок PZ
+                if "ERROR:" in line or "Exception" in line or "STACK TRACE" in line or "failed to load" in line:
+                    errors_found.append(line.strip())
+                    
+            if not errors_found:
+                self.trouble_console.append(f"<span style='color: #a6e3a1;'>{tr('trb_no_errors')}</span>")
+            else:
+                self.trouble_console.append(f"<span style='color: #f38ba8; font-weight: bold;'>{tr('trb_found_errors', count=len(errors_found))}</span>")
+                # Выводим уникальные ошибки (чтобы не спамить одинаковыми)
+                unique_errors = list(dict.fromkeys(errors_found))[:50] # Показываем макс 50
+                for err in unique_errors:
+                    self.trouble_console.append(f"<span style='color: #eba0ac;'>- {err}</span>")
+                    
+        except Exception as e:
+            self.trouble_console.append(f"<span style='color: red;'>Ошибка чтения логов: {e}</span>")
+
+    def clear_lua_cache(self):
+        lua_dir = os.path.expanduser(r"~\Zomboid\Lua")
+        if os.path.exists(lua_dir):
+            try:
+                shutil.rmtree(lua_dir, ignore_errors=True)
+                QMessageBox.information(self, tr("msg_done"), tr("trb_lua_ok"))
+            except Exception as e:
+                QMessageBox.critical(self, tr("msg_err"), str(e))
+        else:
+            QMessageBox.information(self, "Info", "Кэш Lua уже чист.")
+
+    def clear_game_logs(self):
+        logs_dir = os.path.expanduser(r"~\Zomboid\Logs")
+        console_txt = os.path.expanduser(r"~\Zomboid\console.txt")
+        
+        cleared = False
+        if os.path.exists(logs_dir):
+            shutil.rmtree(logs_dir, ignore_errors=True)
+            cleared = True
+        if os.path.exists(console_txt):
+            try: os.remove(console_txt); cleared = True
+            except: pass
+            
+        if cleared:
+            QMessageBox.information(self, tr("msg_done"), tr("trb_logs_ok"))
+        else:
+            QMessageBox.information(self, "Info", "Папка с логами уже пуста.")
+
+    # --- Функции Вкладки 2 ---
     def ld_mods(self):
         p = load_settings().get("game_mods_path")
         if not p or not os.path.exists(p): self.tb.setRowCount(0); return
@@ -417,6 +533,7 @@ class MainWindow(QMainWindow):
                 if os.path.isdir(fp): shutil.rmtree(fp, ignore_errors=True)
             self.ld_mods()
 
+    # --- Функции Вкладки 1 ---
     def op_set(self):
         if SettingsDialog(self).exec(): self.ld_mods()
 
