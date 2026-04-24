@@ -172,12 +172,24 @@ def parse_mod_info(filepath):
         with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
             for line in f:
                 line = line.strip()
-                if line.startswith("id="): data["id"] = line[3:].strip()
-                elif line.startswith("name="): data["name"] = line[5:].strip()
-                elif line.startswith("require="):
-                    r = line[8:].strip()
-                    if r: data["require"] = [x.strip() for x in r.split(',')]
-    except: pass
+                # Игнорируем пустые строки и строки без знака "="
+                if not line or "=" not in line:
+                    continue
+                
+                # Разбиваем строку только по ПЕРВОМУ знаку "="
+                parts = line.split("=", 1)
+                key = parts[0].strip().lower() # Убираем пробелы и делаем маленькие буквы (ID -> id)
+                val = parts[1].strip()
+
+                if key == "id":
+                    data["id"] = val
+                elif key == "name":
+                    data["name"] = val
+                elif key == "require":
+                    if val:
+                        data["require"] = [x.strip() for x in val.split(',')]
+    except Exception as e: 
+        pass
     return data
 
 # ================= ОКНО НАСТРОЕК =================
@@ -405,7 +417,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(t, tr("tab_mods"))
         self.ld_mods()
 
-# --- Вкладка 3: Траблшутинг ---
+    # --- Вкладка 3: Траблшутинг ---
     def init_trouble_tab(self):
         t = QWidget()
         lay = QVBoxLayout(t)
@@ -447,109 +459,103 @@ class MainWindow(QMainWindow):
 
     # --- ЛОГИКА ГЛУБОКОГО АНАЛИЗА (НОВОЕ) ---
     def run_deep_analysis(self):
-        self.trouble_console.clear()
-        self.trouble_console.append(f"<span style='color: yellow;'>{tr('rep_wait')}</span>")
-        QApplication.processEvents() # Обновляем UI, чтобы текст появился до начала зависания парсера
-        
-        game_path = load_settings().get("game_mods_path")
-        if not game_path or not os.path.exists(game_path):
-            self.trouble_console.append("<span style='color: red;'>Папка модов не найдена!</span>")
-            return
-
-        mods_installed = {} # id -> name
-        dependencies_map = {} # req_id -> [mod_name1, mod_name2]
-        file_conflicts_map = {} # media_path -> [mod_name1, mod_name2]
-
-        # 1. Сбор информации о модах
-        for folder in os.listdir(game_path):
-            folder_path = os.path.join(game_path, folder)
-            if not os.path.isdir(folder_path): continue
+            self.trouble_console.clear()
+            self.trouble_console.append(f"<span style='color: yellow;'>{tr('rep_wait')}</span>")
+            QApplication.processEvents()
             
-            info_path = os.path.join(folder_path, "mod.info")
-            if os.path.exists(info_path):
-                data = parse_mod_info(info_path)
-                mod_id = data["id"]
-                mod_name = data["name"]
-                
-                if mod_id:
-                    mods_installed[mod_id] = mod_name
-                    # Записываем, кто что требует
-                    for req in data["require"]:
-                        if req not in dependencies_map:
-                            dependencies_map[req] = []
-                        dependencies_map[req].append(mod_name)
+            game_path = load_settings().get("game_mods_path")
+            if not game_path or not os.path.exists(game_path):
+                self.trouble_console.append("<span style='color: red;'>Папка модов не найдена!</span>")
+                return
+
+            mods_installed = {}
+            dependencies_map = {}
+            file_conflicts_map = {}
+
+            # 1. Рекурсивный поиск mod.info
+            for root, dirs, files in os.walk(game_path):
+                if "mod.info" in files:
+                    info_path = os.path.join(root, "mod.info")
+                    data = parse_mod_info(info_path)
+                    mod_id = data.get("id")
+                    mod_name = data.get("name")
+                    
+                    if mod_id:
+                        # Если мод имеет версии (подпапки), добавим её в имя для отчета
+                        rel_path = os.path.relpath(root, game_path)
+                        root_folder_name = rel_path.split(os.sep)[0]
+                        if root != os.path.join(game_path, root_folder_name):
+                            mod_name = f"{mod_name} [{os.path.basename(root)}]"
+                            
+                        mods_installed[mod_id] = mod_name
+                        
+                        for req in data.get("require", []):
+                            if req not in dependencies_map:
+                                dependencies_map[req] = []
+                            dependencies_map[req].append(mod_name)
+                    
+                    # 2. Сканирование файлов media именно для ЭТОЙ найденной версии мода
+                    media_path = os.path.join(root, "media")
+                    if os.path.exists(media_path):
+                        for m_root, m_dirs, m_files in os.walk(media_path):
+                            for file in m_files:
+                                if file.endswith(('.lua', '.txt', '.xml')):
+                                    f_rel_path = os.path.relpath(os.path.join(m_root, file), media_path)
+                                    if "client" in f_rel_path or "server" in f_rel_path or "scripts" in f_rel_path:
+                                        if f_rel_path not in file_conflicts_map:
+                                            file_conflicts_map[f_rel_path] = []
+                                        file_conflicts_map[f_rel_path].append(mod_name)
+
+            # Анализ логов
+            log_path = os.path.expanduser(r"~\Zomboid\console.txt")
+            errors = 0
+            warns = 0
+            if os.path.exists(log_path):
+                with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    for line in f:
+                        if "ERROR:" in line or "Exception" in line: errors += 1
+                        elif "WARN:" in line: warns += 1
+
+            # Формирование отчёта
+            report = []
+            report.append(f"<h2 style='color: #89b4fa; text-align: center;'>{tr('rep_title')}</h2>")
             
-            # 2. Сканирование файлов (Конфликты Lua/Scripts)
-            media_path = os.path.join(folder_path, "media")
-            if os.path.exists(media_path):
-                for root, dirs, files in os.walk(media_path):
-                    for file in files:
-                        # Нас интересуют только скрипты и луа, текстуры и звуки не конфликтуют критично
-                        if file.endswith(('.lua', '.txt', '.xml')):
-                            rel_path = os.path.relpath(os.path.join(root, file), media_path)
-                            # Игнорируем специфичные для мода файлы, ищем те, что лежат в общих папках (например UI)
-                            if "client" in rel_path or "server" in rel_path or "scripts" in rel_path:
-                                if rel_path not in file_conflicts_map:
-                                    file_conflicts_map[rel_path] = []
-                                file_conflicts_map[rel_path].append(mod_name if 'mod_name' in locals() else folder)
+            report.append(f"<h3 style='color: #cba6f7;'>{tr('rep_stat')}</h3>")
+            report.append(f"<ul><li>{tr('rep_mods_inst')} <b>{len(mods_installed)}</b></li></ul><br>")
 
-        # Анализ логов
-        log_path = os.path.expanduser(r"~\Zomboid\console.txt")
-        errors = 0
-        warns = 0
-        if os.path.exists(log_path):
-            with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
-                for line in f:
-                    if "ERROR:" in line or "Exception" in line: errors += 1
-                    elif "WARN:" in line: warns += 1
+            report.append(f"<h3 style='color: #cba6f7;'>{tr('rep_deps')}</h3>")
+            missing_count = 0
+            for req_id, needed_by in dependencies_map.items():
+                if req_id not in mods_installed:
+                    missing_count += 1
+                    report.append(f"<span style='color: #f38ba8;'><b>❌ {tr('rep_miss')}: {req_id}</b></span>")
+                    report.append(f"<span style='color: gray;'>   {tr('rep_req_by')} {', '.join(needed_by)}</span><br>")
+            if missing_count == 0:
+                report.append(f"<span style='color: #a6e3a1;'>{tr('rep_deps_ok')}</span><br><br>")
+            else: report.append("<br>")
 
-        # --- ФОРМИРОВАНИЕ ОТЧЁТА ---
-        report = []
-        report.append(f"<h2 style='color: #89b4fa; text-align: center;'>{tr('rep_title')}</h2>")
-        
-        # Статистика
-        report.append(f"<h3 style='color: #cba6f7;'>{tr('rep_stat')}</h3>")
-        report.append(f"<ul><li>{tr('rep_mods_inst')} <b>{len(mods_installed)}</b></li></ul><br>")
+            report.append(f"<h3 style='color: #cba6f7;'>{tr('rep_conf')}</h3>")
+            conflicts_count = 0
+            report.append(f"<span style='color: gray;'>{tr('rep_conf_desc')}</span><br>")
+            for file_path, mods in file_conflicts_map.items():
+                if len(set(mods)) > 1: # Используем set, чтобы исключить дубликаты из одного мода
+                    conflicts_count += 1
+                    report.append(f"<span style='color: #f9e2af;'>⚠️ {tr('rep_file')} <b>{file_path}</b></span>")
+                    report.append(f"<span style='color: #eba0ac;'>   {tr('rep_mods')} {', '.join(set(mods))}</span><br>")
+            
+            if conflicts_count == 0:
+                report.append(f"<span style='color: #a6e3a1;'>{tr('rep_conf_ok')}</span><br><br>")
+            else: report.append("<br>")
 
-        # Зависимости
-        report.append(f"<h3 style='color: #cba6f7;'>{tr('rep_deps')}</h3>")
-        missing_count = 0
-        for req_id, needed_by in dependencies_map.items():
-            if req_id not in mods_installed:
-                missing_count += 1
-                report.append(f"<span style='color: #f38ba8;'><b>❌ {tr('rep_miss')}: {req_id}</b></span>")
-                report.append(f"<span style='color: gray;'>   {tr('rep_req_by')} {', '.join(needed_by)}</span><br>")
-        if missing_count == 0:
-            report.append(f"<span style='color: #a6e3a1;'>{tr('rep_deps_ok')}</span><br><br>")
-        else: report.append("<br>")
+            report.append(f"<h3 style='color: #cba6f7;'>{tr('rep_logs')}</h3>")
+            if errors > 0 or warns > 0:
+                report.append(f"<span style='color: #f38ba8;'>❌ {tr('rep_errs')} <b>{errors}</b></span><br>")
+                report.append(f"<span style='color: #f9e2af;'>⚠️ {tr('rep_warns')} <b>{warns}</b></span><br>")
+            else:
+                report.append(f"<span style='color: #a6e3a1;'>{tr('rep_log_ok')}</span>")
 
-        # Конфликты
-        report.append(f"<h3 style='color: #cba6f7;'>{tr('rep_conf')}</h3>")
-        conflicts_count = 0
-        report.append(f"<span style='color: gray;'>{tr('rep_conf_desc')}</span><br>")
-        for file_path, mods in file_conflicts_map.items():
-            if len(mods) > 1:
-                # Фильтр: если моды называются похоже (например Mod_V1 и Mod_V2), выводим
-                # Исключаем моды от одного автора, если они задуманы так (опционально)
-                conflicts_count += 1
-                report.append(f"<span style='color: #f9e2af;'>⚠️ {tr('rep_file')} <b>{file_path}</b></span>")
-                report.append(f"<span style='color: #eba0ac;'>   {tr('rep_mods')} {', '.join(mods)}</span><br>")
-        
-        if conflicts_count == 0:
-            report.append(f"<span style='color: #a6e3a1;'>{tr('rep_conf_ok')}</span><br><br>")
-        else: report.append("<br>")
-
-        # Логи
-        report.append(f"<h3 style='color: #cba6f7;'>{tr('rep_logs')}</h3>")
-        if errors > 0 or warns > 0:
-            report.append(f"<span style='color: #f38ba8;'>❌ {tr('rep_errs')} <b>{errors}</b></span><br>")
-            report.append(f"<span style='color: #f9e2af;'>⚠️ {tr('rep_warns')} <b>{warns}</b></span><br>")
-        else:
-            report.append(f"<span style='color: #a6e3a1;'>{tr('rep_log_ok')}</span>")
-
-        # Вывод
-        self.trouble_console.clear()
-        self.trouble_console.setHtml("".join(report))
+            self.trouble_console.clear()
+            self.trouble_console.setHtml("".join(report))
 
 
     # --- Старые функции траблшутинга (остаются) ---
@@ -616,25 +622,44 @@ class MainWindow(QMainWindow):
         p = load_settings().get("game_mods_path")
         if not p or not os.path.exists(p): self.tb.setRowCount(0); return
         mi, ids = [], set()
-        for f in os.listdir(p):
-            fp = os.path.join(p, f)
-            inf = os.path.join(fp, "mod.info")
-            if os.path.exists(inf):
+        
+        for root, dirs, files in os.walk(p):
+            if "mod.info" in files:
+                inf = os.path.join(root, "mod.info")
                 d = parse_mod_info(inf)
-                if d["id"]: d["fp"] = fp; mi.append(d); ids.add(d["id"])
+                if d["id"]:
+                    rel_path = os.path.relpath(root, p)
+                    root_folder_name = rel_path.split(os.sep)[0]
+                    d["root_fp"] = os.path.join(p, root_folder_name)
+                    
+                    if root != d["root_fp"]:
+                        version_folder = os.path.basename(root)
+                        d["display_name"] = f"{d['name']} [{version_folder}]"
+                    else:
+                        d["display_name"] = d["name"]
+                        
+                    mi.append(d)
+                    ids.add(d["id"])
         
         self.tb.setRowCount(len(mi))
         for r, m in enumerate(mi):
-            n = QTableWidgetItem(m["name"]); n.setData(Qt.ItemDataRole.UserRole, m["fp"])
+            n = QTableWidgetItem(m["display_name"])
+            n.setData(Qt.ItemDataRole.UserRole, m["root_fp"]) 
             self.tb.setItem(r, 0, n)
             self.tb.setItem(r, 1, QTableWidgetItem(m["id"]))
             self.tb.setItem(r, 2, QTableWidgetItem(", ".join(m["require"]) if m["require"] else tr("txt_none")))
 
-            if not m["require"]: st = QTableWidgetItem(tr("stat_ok")); st.setForeground(Qt.GlobalColor.green)
+            if not m["require"]: 
+                st = QTableWidgetItem(tr("stat_ok"))
+                st.setForeground(Qt.GlobalColor.green)
             else:
                 ms = [x for x in m["require"] if x not in ids]
-                if not ms: st = QTableWidgetItem(tr("stat_all_inst")); st.setForeground(Qt.GlobalColor.green)
-                else: st = QTableWidgetItem(tr("stat_miss", miss=", ".join(ms))); st.setForeground(Qt.GlobalColor.red)
+                if not ms: 
+                    st = QTableWidgetItem(tr("stat_all_inst"))
+                    st.setForeground(Qt.GlobalColor.green)
+                else: 
+                    st = QTableWidgetItem(tr("stat_miss", miss=", ".join(ms)))
+                    st.setForeground(Qt.GlobalColor.red)
             self.tb.setItem(r, 3, st)
 
     def op_fld(self):
