@@ -8,17 +8,18 @@ from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, 
                              QWidget, QPushButton, QLineEdit, QTextEdit, QLabel,
                              QListWidget, QProgressBar, QDialog, QFileDialog, QSplitter, 
-                             QMessageBox, QCheckBox, QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView)
+                             QMessageBox, QCheckBox, QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QComboBox)
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile
 
 SETTINGS_FILE = "settings.json"
+LOCALES_DIR = "locales"
 PZ_APP_ID = "108600"
 
 # --- Темная тема (QSS) ---
 DARK_STYLESHEET = """
 QMainWindow, QDialog, QWidget { background-color: #1e1e2e; color: #cdd6f4; font-family: 'Segoe UI', Arial; }
-QLineEdit { background-color: #313244; color: #cdd6f4; border: 1px solid #45475a; padding: 5px; border-radius: 4px; }
+QLineEdit, QComboBox { background-color: #313244; color: #cdd6f4; border: 1px solid #45475a; padding: 5px; border-radius: 4px; }
 QPushButton { background-color: #45475a; color: #cdd6f4; border: none; padding: 8px 15px; border-radius: 4px; font-weight: bold; }
 QPushButton:hover { background-color: #585b70; }
 QPushButton#NavBtn { padding: 5px 10px; font-size: 16px; background-color: #313244; border: 1px solid #45475a; }
@@ -40,457 +41,413 @@ QProgressBar { border: 1px solid #45475a; border-radius: 4px; text-align: center
 QProgressBar::chunk { background-color: #a6e3a1; }
 """
 
-# ================= ФИКС ОШИБОК JS В КОНСОЛИ =================
-class SilentWebEnginePage(QWebEnginePage):
-    def javaScriptConsoleMessage(self, level, message, lineNumber, sourceID):
-        pass # Игнорируем спам об ошибках CSP от Steam
+# ================= ЛОКАЛИЗАЦИЯ =================
+DEFAULT_LANG = {
+    "app_title": "🧟 Project Zomboid Mod Manager",
+    "btn_settings": "⚙️ Настройки",
+    "tab_workshop": "🌐 Мастерская",
+    "tab_mods": "📦 Установленные моды",
+    "btn_nav_go": "Перейти",
+    "btn_add_queue": "➕ В очередь",
+    "btn_rem_queue": "Убрать из очереди",
+    "btn_dl_queue": "🚀 Скачать очередь",
+    "btn_update_all": "🔄 Обновить скачанные",
+    "lbl_queue": "Очередь (Workshop IDs):",
+    "lbl_db": "База:",
+    "btn_refresh": "🔄 Обновить список",
+    "btn_open_folder": "📂 Открыть папку",
+    "btn_del_sel": "🗑️ Удалить выбранные",
+    "btn_del_all": "⚠️ Удалить ВСЕ",
+    "tbl_name": "Название мода",
+    "tbl_id": "Внутренний ID",
+    "tbl_req": "Требуемые моды",
+    "tbl_status": "Статус зависимостей",
+    "stat_ok": "✅ Ок",
+    "stat_all_inst": "✅ Все установлены",
+    "stat_miss": "❌ Нет: {miss}",
+    "txt_none": "Нет",
+    "msg_done": "Готово",
+    "msg_all_done": "Все задачи выполнены!",
+    "msg_err": "Ошибка",
+    "msg_err_id": "Не найден ID мода в URL.",
+    "msg_err_folder": "Папка модов не найдена. Проверьте настройки.",
+    "msg_conf": "Подтверждение",
+    "msg_conf_del": "Удалить {count} выбранных модов?",
+    "msg_warn": "ВНИМАНИЕ",
+    "msg_warn_del_all": "Вы уверены, что хотите УДАЛИТЬ ВСЕ МОДЫ из папки игры?\nЭто действие нельзя отменить!",
+    "set_title": "⚙️ Настройки",
+    "set_steamcmd": "steamcmd.exe:",
+    "set_ws": "Папка Workshop (108600):",
+    "set_game": "Папка Zomboid/mods:",
+    "set_auto": "Авто-установка в игру после скачивания",
+    "set_lang": "Язык интерфейса:",
+    "set_save": "💾 Сохранить",
+    "cons_title": "Выполнение задач",
+    "cons_wait": "Ожидание...",
+    "cons_prog": "Прогресс: {cur} / {tot}",
+    "log_start": "\n--- [{cur}/{tot}] ID: {mod_id} ---",
+    "log_err_st": "Ошибка SteamCMD: {e}",
+    "log_ok_inst": "✅ Установлен: {sub}",
+    "log_err_inst": "❌ Ошибка копирования {sub}: {e}",
+    "log_done": "\n=== ГОТОВО ==="
+}
 
+LANG_DICT = {}
+
+def tr(key, **kwargs):
+    text = LANG_DICT.get(key, DEFAULT_LANG.get(key, key))
+    try: return text.format(**kwargs)
+    except Exception: return text
+
+def load_language(lang_code="ru"):
+    os.makedirs(LOCALES_DIR, exist_ok=True)
+    ru_path = os.path.join(LOCALES_DIR, "ru.json")
+    if not os.path.exists(ru_path):
+        with open(ru_path, 'w', encoding='utf-8') as f:
+            json.dump(DEFAULT_LANG, f, indent=4, ensure_ascii=False)
+            
+    lang_path = os.path.join(LOCALES_DIR, f"{lang_code}.json")
+    if os.path.exists(lang_path):
+        with open(lang_path, 'r', encoding='utf-8') as f:
+            global LANG_DICT
+            LANG_DICT = json.load(f)
+    else:
+        LANG_DICT = DEFAULT_LANG
+
+def get_available_languages():
+    if not os.path.exists(LOCALES_DIR): return ["ru"]
+    return [f.replace(".json", "") for f in os.listdir(LOCALES_DIR) if f.endswith(".json")]
+
+# ================= НАСТРОЙКИ =================
 def load_settings():
-    default_game_mods = os.path.expanduser(r"~\Zomboid\mods")
-    default_settings = {
-        "steamcmd_path": "", "workshop_path": "", "game_mods_path": default_game_mods, "auto_install": True
-    }
+    def_mods = os.path.expanduser(r"~\Zomboid\mods")
+    s = {"steamcmd_path": "", "workshop_path": "", "game_mods_path": def_mods, "auto_install": True, "language": "ru"}
     if os.path.exists(SETTINGS_FILE):
-        with open(SETTINGS_FILE, 'r') as f:
-            default_settings.update(json.load(f))
-    return default_settings
+        with open(SETTINGS_FILE, 'r') as f: s.update(json.load(f))
+    return s
 
-def save_settings(settings):
-    with open(SETTINGS_FILE, 'w') as f:
-        json.dump(settings, f, indent=4)
+def save_settings(s):
+    with open(SETTINGS_FILE, 'w') as f: json.dump(s, f, indent=4)
+
+load_language(load_settings().get("language", "ru"))
+
+class SilentWebEnginePage(QWebEnginePage):
+    def javaScriptConsoleMessage(self, level, message, lineNumber, sourceID): pass
 
 def parse_mod_info(filepath):
-    mod_data = {"id": "", "name": "Неизвестный мод", "require": []}
+    data = {"id": "", "name": "Unknown Mod", "require": []}
     try:
         with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
             for line in f:
                 line = line.strip()
-                if line.startswith("id="): mod_data["id"] = line[3:].strip()
-                elif line.startswith("name="): mod_data["name"] = line[5:].strip()
+                if line.startswith("id="): data["id"] = line[3:].strip()
+                elif line.startswith("name="): data["name"] = line[5:].strip()
                 elif line.startswith("require="):
-                    reqs = line[8:].strip()
-                    if reqs: mod_data["require"] = [r.strip() for r in reqs.split(',')]
-    except Exception: pass
-    return mod_data
+                    r = line[8:].strip()
+                    if r: data["require"] = [x.strip() for x in r.split(',')]
+    except: pass
+    return data
 
 # ================= ОКНО НАСТРОЕК =================
 class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("⚙️ Настройки")
-        self.resize(600, 250)
+        self.setWindowTitle(tr("set_title"))
+        self.resize(600, 300)
         self.settings = load_settings()
         layout = QVBoxLayout(self)
 
-        def add_row(label, key, browse_func):
+        def add_row(lbl, key, browse):
             row = QHBoxLayout()
             inp = QLineEdit(self.settings.get(key, ""))
             btn = QPushButton("📂")
             btn.setFixedWidth(40)
-            btn.clicked.connect(lambda: browse_func(inp))
-            row.addWidget(QLabel(label))
+            btn.clicked.connect(lambda: browse(inp))
+            row.addWidget(QLabel(lbl))
             row.addWidget(inp)
             row.addWidget(btn)
             layout.addLayout(row)
             return inp
 
-        self.steam_input = add_row("steamcmd.exe:", "steamcmd_path", self.browse_file)
-        self.ws_input = add_row("Папка Workshop (108600):", "workshop_path", self.browse_dir)
-        self.game_input = add_row("Папка Zomboid/mods:", "game_mods_path", self.browse_dir)
+        self.st_inp = add_row(tr("set_steamcmd"), "steamcmd_path", self.br_f)
+        self.ws_inp = add_row(tr("set_ws"), "workshop_path", self.br_d)
+        self.gm_inp = add_row(tr("set_game"), "game_mods_path", self.br_d)
 
-        self.auto_cb = QCheckBox("Авто-установка в игру после скачивания")
+        lang_lay = QHBoxLayout()
+        self.lang_cb = QComboBox()
+        self.lang_cb.addItems(get_available_languages())
+        self.lang_cb.setCurrentText(self.settings.get("language", "ru"))
+        lang_lay.addWidget(QLabel(tr("set_lang")))
+        lang_lay.addWidget(self.lang_cb)
+        layout.addLayout(lang_lay)
+        
+        self.auto_cb = QCheckBox(tr("set_auto"))
         self.auto_cb.setChecked(self.settings.get("auto_install", True))
-        layout.addWidget(self.auto_cb)
+        layout.addWidget(self.auto_cb)        
 
-        save_btn = QPushButton("💾 Сохранить")
-        save_btn.setObjectName("SuccessBtn")
-        save_btn.clicked.connect(self.save_and_close)
-        layout.addWidget(save_btn, alignment=Qt.AlignmentFlag.AlignRight)
+        sv_btn = QPushButton(tr("set_save"))
+        sv_btn.setObjectName("SuccessBtn")
+        sv_btn.clicked.connect(self.save_close)
+        layout.addWidget(sv_btn, alignment=Qt.AlignmentFlag.AlignRight)
 
-    def browse_file(self, inp):
-        path, _ = QFileDialog.getOpenFileName(self, "Выбор файла", "", "Exe (*.exe)")
-        if path: inp.setText(path)
+    def br_f(self, i): 
+        p, _ = QFileDialog.getOpenFileName(self, "", "", "Exe (*.exe)")
+        if p: i.setText(p)
+    def br_d(self, i): 
+        p = QFileDialog.getExistingDirectory(self, "")
+        if p: i.setText(p)
 
-    def browse_dir(self, inp):
-        path = QFileDialog.getExistingDirectory(self, "Выбор папки")
-        if path: inp.setText(path)
-
-    def save_and_close(self):
+    def save_close(self):
         self.settings.update({
-            "steamcmd_path": self.steam_input.text(),
-            "workshop_path": self.ws_input.text(),
-            "game_mods_path": self.game_input.text(),
-            "auto_install": self.auto_cb.isChecked()
+            "steamcmd_path": self.st_inp.text(),
+            "workshop_path": self.ws_inp.text(),
+            "game_mods_path": self.gm_inp.text(),
+            "auto_install": self.auto_cb.isChecked(),
+            "language": self.lang_cb.currentText()
         })
         save_settings(self.settings)
+        QMessageBox.information(self, tr("msg_done"), tr("msg_done") + "\nПерезапустите программу для смены языка.")
         self.accept()
 
 # ================= КОНСОЛЬ =================
 class ConsoleWindow(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Выполнение задач")
+        self.setWindowTitle(tr("cons_title"))
         self.resize(700, 450)
-        layout = QVBoxLayout(self)
-        self.progress_label = QLabel("Ожидание...")
-        self.progress_bar = QProgressBar()
-        self.log_console = QTextEdit()
-        self.log_console.setReadOnly(True)
-        self.log_console.setStyleSheet("background-color: #11111b; color: #a6e3a1; font-family: Consolas;")
-        layout.addWidget(self.progress_label)
-        layout.addWidget(self.progress_bar)
-        layout.addWidget(self.log_console)
+        lay = QVBoxLayout(self)
+        self.lbl = QLabel(tr("cons_wait"))
+        self.bar = QProgressBar()
+        self.txt = QTextEdit()
+        self.txt.setReadOnly(True)
+        self.txt.setStyleSheet("background-color: #11111b; color: #a6e3a1; font-family: Consolas;")
+        lay.addWidget(self.lbl)
+        lay.addWidget(self.bar)
+        lay.addWidget(self.txt)
 
-    def update_progress(self, current, total):
-        self.progress_label.setText(f"Прогресс: {current} / {total}")
-        self.progress_bar.setValue(int((current / total) * 100) if total > 0 else 0)
+    def update_prog(self, c, t):
+        self.lbl.setText(tr("cons_prog", cur=c, tot=t))
+        self.bar.setValue(int((c/t)*100) if t>0 else 0)
 
-    def append_log(self, text):
-        self.log_console.append(text)
-        sb = self.log_console.verticalScrollBar()
+    def add_log(self, t):
+        self.txt.append(t)
+        sb = self.txt.verticalScrollBar()
         sb.setValue(sb.maximum())
 
-# ================= РАБОЧИЙ ПОТОК =================
+# ================= ВОРКЕР =================
 class DownloadWorker(QThread):
-    log_signal = pyqtSignal(str)
-    progress_signal = pyqtSignal(int, int)
-    finished_signal = pyqtSignal()
+    log_sig = pyqtSignal(str)
+    prog_sig = pyqtSignal(int, int)
+    fin_sig = pyqtSignal()
 
-    def __init__(self, mod_ids, settings, install_only=False):
+    def __init__(self, ids, s, only_inst=False):
         super().__init__()
-        self.mod_ids = mod_ids
-        self.settings = settings
-        self.install_only = install_only
+        self.ids = ids
+        self.s = s
+        self.only_inst = only_inst
 
     def run(self):
-        steamcmd = self.settings.get("steamcmd_path")
-        ws_path = self.settings.get("workshop_path")
-        game_path = self.settings.get("game_mods_path")
-        auto_inst = self.settings.get("auto_install", True)
-        total = len(self.mod_ids)
-        self.progress_signal.emit(0, total)
+        st = self.s.get("steamcmd_path")
+        ws = self.s.get("workshop_path")
+        gm = self.s.get("game_mods_path")
+        auto = self.s.get("auto_install", True)
+        tot = len(self.ids)
+        self.prog_sig.emit(0, tot)
 
-        for i, mod_id in enumerate(self.mod_ids):
-            self.log_signal.emit(f"\n--- [{i+1}/{total}] ID: {mod_id} ---")
-            if not self.install_only:
+        for i, mid in enumerate(self.ids):
+            self.log_sig.emit(tr("log_start", cur=i+1, tot=tot, mod_id=mid))
+            if not self.only_inst:
                 try:
-                    cmd = [steamcmd, "+login", "anonymous", "+workshop_download_item", PZ_APP_ID, mod_id, "+quit"]
-                    process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                    for line in process.stdout: self.log_signal.emit(line.strip())
-                    process.wait()
-                except Exception as e:
-                    self.log_signal.emit(f"Ошибка SteamCMD: {e}")
+                    c = [st, "+login", "anonymous", "+workshop_download_item", PZ_APP_ID, mid, "+quit"]
+                    p = subprocess.Popen(c, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                    for l in p.stdout: self.log_sig.emit(l.strip())
+                    p.wait()
+                except Exception as e: self.log_sig.emit(tr("log_err_st", e=e))
 
-            if auto_inst or self.install_only:
-                self.install_mod(mod_id, ws_path, game_path)
-            self.progress_signal.emit(i + 1, total)
+            if auto or self.only_inst: self.install(mid, ws, gm)
+            self.prog_sig.emit(i+1, tot)
+        self.log_sig.emit(tr("log_done"))
+        self.fin_sig.emit()
 
-        self.log_signal.emit("\n=== ГОТОВО ===")
-        self.finished_signal.emit()
-
-    def install_mod(self, mod_id, ws_path, game_path):
-        ws_mods_dir = os.path.join(ws_path, mod_id, "mods")
-        if not os.path.exists(ws_mods_dir): return
-        os.makedirs(game_path, exist_ok=True)
-        for sub_mod in os.listdir(ws_mods_dir):
-            src, dst = os.path.join(ws_mods_dir, sub_mod), os.path.join(game_path, sub_mod)
+    def install(self, mid, ws, gm):
+        ws_m = os.path.join(ws, mid, "mods")
+        if not os.path.exists(ws_m): return
+        os.makedirs(gm, exist_ok=True)
+        for sub in os.listdir(ws_m):
+            src, dst = os.path.join(ws_m, sub), os.path.join(gm, sub)
             if os.path.isdir(src):
                 try:
                     shutil.copytree(src, dst, dirs_exist_ok=True)
-                    self.log_signal.emit(f"✅ Установлен: {sub_mod}")
-                except Exception as e: self.log_signal.emit(f"❌ Ошибка копирования {sub_mod}: {e}")
+                    self.log_sig.emit(tr("log_ok_inst", sub=sub))
+                except Exception as e: self.log_sig.emit(tr("log_err_inst", sub=sub, e=e))
 
 # ================= ГЛАВНОЕ ОКНО =================
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("PZ Mod Manager")
+        self.setWindowTitle(tr("app_title"))
         self.resize(1200, 750)
         self.setStyleSheet(DARK_STYLESHEET)
-        self.console = ConsoleWindow(self)
+        self.cons = ConsoleWindow(self)
 
-        # --- Настройка постоянного профиля браузера ---
-        # Это сохраняет кэш и логины стима (чтобы не логиниться каждый раз)
-        self.browser_profile = QWebEngineProfile.defaultProfile()
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        self.browser_profile.setPersistentStoragePath(os.path.join(base_dir, "browser_data"))
-        self.browser_profile.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
+        self.prof = QWebEngineProfile.defaultProfile()
+        self.prof.setPersistentStoragePath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "browser_data"))
+        self.prof.setPersistentCookiesPolicy(QWebEngineProfile.PersistentCookiesPolicy.ForcePersistentCookies)
 
-        central = QWidget()
-        self.setCentralWidget(central)
-        main_layout = QVBoxLayout(central)
+        cen = QWidget()
+        self.setCentralWidget(cen)
+        lay = QVBoxLayout(cen)
 
-        header_layout = QHBoxLayout()
-        title = QLabel("🧟 Project Zomboid Mod Manager")
-        title.setStyleSheet("font-size: 18px; font-weight: bold; color: #89b4fa;")
-        settings_btn = QPushButton("⚙️ Настройки")
-        settings_btn.setFixedWidth(120)
-        settings_btn.clicked.connect(self.open_settings)
-        header_layout.addWidget(title)
-        header_layout.addStretch()
-        header_layout.addWidget(settings_btn)
-        main_layout.addLayout(header_layout)
+        head = QHBoxLayout()
+        ttl = QLabel(tr("app_title"))
+        ttl.setStyleSheet("font-size: 18px; font-weight: bold; color: #89b4fa;")
+        set_btn = QPushButton(tr("btn_settings"))
+        set_btn.clicked.connect(self.op_set)
+        head.addWidget(ttl); head.addStretch(); head.addWidget(set_btn)
+        lay.addLayout(head)
 
         self.tabs = QTabWidget()
-        main_layout.addWidget(self.tabs)
+        lay.addWidget(self.tabs)
+        self.init_ws_tab()
+        self.init_mod_tab()
 
-        self.init_workshop_tab()
-        self.init_local_mods_tab()
+    def init_ws_tab(self):
+        t = QWidget()
+        lay = QVBoxLayout(t)
+        u_lay = QHBoxLayout()
+        for b_txt, f in [("◀", lambda: self.bw.back()), ("▶", lambda: self.bw.forward()), ("🔄", lambda: self.bw.reload())]:
+            b = QPushButton(b_txt); b.setObjectName("NavBtn"); b.clicked.connect(f); u_lay.addWidget(b)
 
-    def init_workshop_tab(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
+        self.url = QLineEdit("https://steamcommunity.com/app/108600/workshop/")
+        n_btn = QPushButton(tr("btn_nav_go"))
+        n_btn.clicked.connect(lambda: self.bw.setUrl(QUrl(self.url.text())))
+        u_lay.addWidget(self.url); u_lay.addWidget(n_btn)
+
+        spl = QSplitter(Qt.Orientation.Horizontal)
+        self.bw = QWebEngineView()
+        self.bw.setPage(SilentWebEnginePage(self.prof, self.bw))
+        self.bw.setUrl(QUrl(self.url.text()))
+        self.bw.urlChanged.connect(lambda q: self.url.setText(q.toString()))
+        self.bw.loadFinished.connect(self.inj_js)
+        spl.addWidget(self.bw)
+
+        rp = QWidget(); r_lay = QVBoxLayout(rp); r_lay.setContentsMargins(0,0,0,0)
+        ad = QPushButton(tr("btn_add_queue")); ad.setObjectName("ActionBtn"); ad.clicked.connect(self.add_q)
+        self.q_list = QListWidget()
+        rm = QPushButton(tr("btn_rem_queue")); rm.clicked.connect(lambda: [self.q_list.takeItem(self.q_list.row(i)) for i in self.q_list.selectedItems()])
+        dl = QPushButton(tr("btn_dl_queue")); dl.setObjectName("SuccessBtn"); dl.clicked.connect(self.dl_q)
+        up = QPushButton(tr("btn_update_all")); up.setObjectName("WarnBtn"); up.clicked.connect(self.up_all)
         
-        # --- ПАНЕЛЬ НАВИГАЦИИ ---
-        url_layout = QHBoxLayout()
+        for w in [ad, QLabel(tr("lbl_queue")), self.q_list, rm, dl, QLabel(tr("lbl_db")), up]: r_lay.addWidget(w)
+        spl.addWidget(rp); spl.setSizes([850, 300])
+        lay.addLayout(u_lay); lay.addWidget(spl)
+        self.tabs.addTab(t, tr("tab_workshop"))
+
+    def inj_js(self, ok):
+        if ok: self.bw.page().runJavaScript("var b=document.getElementById('cookie_prefs_popup_background'),p=document.getElementById('cookie_prefs_popup');if(b)b.style.display='none';if(p)p.style.display='none';document.body.style.overflow='auto';")
+
+    def init_mod_tab(self):
+        t = QWidget(); lay = QVBoxLayout(t)
+        top = QHBoxLayout()
+        rf = QPushButton(tr("btn_refresh")); rf.setObjectName("ActionBtn"); rf.clicked.connect(self.ld_mods)
+        op = QPushButton(tr("btn_open_folder")); op.clicked.connect(self.op_fld)
+        ds = QPushButton(tr("btn_del_sel")); ds.setObjectName("WarnBtn"); ds.clicked.connect(self.del_s)
+        da = QPushButton(tr("btn_del_all")); da.setObjectName("DangerBtn"); da.clicked.connect(self.del_a)
+        top.addWidget(rf); top.addWidget(op); top.addStretch(); top.addWidget(ds); top.addWidget(da)
+
+        self.tb = QTableWidget()
+        self.tb.setColumnCount(4)
+        self.tb.setHorizontalHeaderLabels([tr("tbl_name"), tr("tbl_id"), tr("tbl_req"), tr("tbl_status")])
+        self.tb.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.tb.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.tb.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.tb.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.tb.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.tb.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+
+        lay.addLayout(top); lay.addWidget(self.tb)
+        self.tabs.addTab(t, tr("tab_mods"))
+        self.ld_mods()
+
+    def ld_mods(self):
+        p = load_settings().get("game_mods_path")
+        if not p or not os.path.exists(p): self.tb.setRowCount(0); return
+        mi, ids = [], set()
+        for f in os.listdir(p):
+            fp = os.path.join(p, f)
+            inf = os.path.join(fp, "mod.info")
+            if os.path.exists(inf):
+                d = parse_mod_info(inf)
+                if d["id"]: d["fp"] = fp; mi.append(d); ids.add(d["id"])
         
-        btn_back = QPushButton("◀")
-        btn_back.setObjectName("NavBtn")
-        btn_back.clicked.connect(lambda: self.browser.back())
-        
-        btn_forward = QPushButton("▶")
-        btn_forward.setObjectName("NavBtn")
-        btn_forward.clicked.connect(lambda: self.browser.forward())
-        
-        btn_reload = QPushButton("🔄")
-        btn_reload.setObjectName("NavBtn")
-        btn_reload.clicked.connect(lambda: self.browser.reload())
+        self.tb.setRowCount(len(mi))
+        for r, m in enumerate(mi):
+            n = QTableWidgetItem(m["name"]); n.setData(Qt.ItemDataRole.UserRole, m["fp"])
+            self.tb.setItem(r, 0, n)
+            self.tb.setItem(r, 1, QTableWidgetItem(m["id"]))
+            self.tb.setItem(r, 2, QTableWidgetItem(", ".join(m["require"]) if m["require"] else tr("txt_none")))
 
-        self.url_bar = QLineEdit("https://steamcommunity.com/app/108600/workshop/")
-        nav_btn = QPushButton("Перейти")
-        nav_btn.clicked.connect(lambda: self.browser.setUrl(QUrl(self.url_bar.text())))
-        
-        url_layout.addWidget(btn_back)
-        url_layout.addWidget(btn_forward)
-        url_layout.addWidget(btn_reload)
-        url_layout.addWidget(self.url_bar)
-        url_layout.addWidget(nav_btn)
-
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        
-        # --- БРАУЗЕР ---
-        self.browser = QWebEngineView()
-        self.browser.setPage(SilentWebEnginePage(self.browser_profile, self.browser)) # Применяем профиль
-        self.browser.setUrl(QUrl(self.url_bar.text()))
-        self.browser.urlChanged.connect(lambda q: self.url_bar.setText(q.toString()))
-        # Подключаем инжектор JS для скрытия табличек Cookie
-        self.browser.loadFinished.connect(self.inject_cookie_remover)
-        
-        splitter.addWidget(self.browser)
-
-        # --- ПРАВАЯ ПАНЕЛЬ ---
-        right_panel = QWidget()
-        r_layout = QVBoxLayout(right_panel)
-        r_layout.setContentsMargins(0,0,0,0)
-
-        add_btn = QPushButton("➕ В очередь")
-        add_btn.setObjectName("ActionBtn")
-        add_btn.clicked.connect(self.add_to_queue)
-        self.queue_list = QListWidget()
-        del_btn = QPushButton("Убрать из очереди")
-        del_btn.clicked.connect(lambda: [self.queue_list.takeItem(self.queue_list.row(i)) for i in self.queue_list.selectedItems()])
-        
-        dl_btn = QPushButton("🚀 Скачать очередь")
-        dl_btn.setObjectName("SuccessBtn")
-        dl_btn.clicked.connect(self.start_download)
-
-        upd_btn = QPushButton("🔄 Обновить скачанные")
-        upd_btn.setObjectName("WarnBtn")
-        upd_btn.clicked.connect(self.update_all)
-
-        r_layout.addWidget(add_btn)
-        r_layout.addWidget(QLabel("Очередь (Workshop IDs):"))
-        r_layout.addWidget(self.queue_list)
-        r_layout.addWidget(del_btn)
-        r_layout.addWidget(dl_btn)
-        r_layout.addWidget(QLabel("База:"))
-        r_layout.addWidget(upd_btn)
-        
-        splitter.addWidget(right_panel)
-        splitter.setSizes([850, 300])
-        layout.addLayout(url_layout)
-        layout.addWidget(splitter)
-        self.tabs.addTab(tab, "🌐 Мастерская")
-
-    # --- ИНЖЕКТОР СКРИПТОВ (Магия решения проблемы с куки) ---
-    def inject_cookie_remover(self, ok):
-        if ok:
-            js = """
-            // Ищем и скрываем темный фон и саму табличку с куки от Steam
-            var bg = document.getElementById('cookie_prefs_popup_background');
-            var popup = document.getElementById('cookie_prefs_popup');
-            if(bg) bg.style.display = 'none';
-            if(popup) popup.style.display = 'none';
-            
-            // Если Steam блокирует прокрутку колесиком при появлении таблички - возвращаем ее
-            document.body.style.overflow = 'auto';
-            """
-            self.browser.page().runJavaScript(js)
-
-    def init_local_mods_tab(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-
-        top_layout = QHBoxLayout()
-        refresh_btn = QPushButton("🔄 Обновить список")
-        refresh_btn.setObjectName("ActionBtn")
-        refresh_btn.clicked.connect(self.load_local_mods)
-
-        open_folder_btn = QPushButton("📂 Открыть папку")
-        open_folder_btn.clicked.connect(self.open_mods_folder)
-
-        del_selected_btn = QPushButton("🗑️ Удалить выбранные")
-        del_selected_btn.setObjectName("WarnBtn")
-        del_selected_btn.clicked.connect(self.delete_selected_mods)
-
-        del_all_btn = QPushButton("⚠️ Удалить ВСЕ")
-        del_all_btn.setObjectName("DangerBtn")
-        del_all_btn.clicked.connect(self.delete_all_mods)
-
-        top_layout.addWidget(refresh_btn)
-        top_layout.addWidget(open_folder_btn)
-        top_layout.addStretch()
-        top_layout.addWidget(del_selected_btn)
-        top_layout.addWidget(del_all_btn)
-
-        self.mods_table = QTableWidget()
-        self.mods_table.setColumnCount(4)
-        self.mods_table.setHorizontalHeaderLabels(["Название мода", "Внутренний ID", "Требуемые моды", "Статус зависимостей"])
-        self.mods_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
-        self.mods_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self.mods_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self.mods_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
-        self.mods_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self.mods_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-
-        layout.addLayout(top_layout)
-        layout.addWidget(self.mods_table)
-        self.tabs.addTab(tab, "📦 Установленные моды (В игре)")
-        
-        self.load_local_mods()
-
-    def load_local_mods(self):
-        settings = load_settings()
-        game_path = settings.get("game_mods_path")
-        if not game_path or not os.path.exists(game_path):
-            self.mods_table.setRowCount(0)
-            return
-
-        mods_info = []
-        installed_ids = set()
-
-        for folder in os.listdir(game_path):
-            folder_path = os.path.join(game_path, folder)
-            info_path = os.path.join(folder_path, "mod.info")
-            if os.path.exists(info_path):
-                data = parse_mod_info(info_path)
-                if data["id"]:
-                    data["folder_path"] = folder_path 
-                    mods_info.append(data)
-                    installed_ids.add(data["id"])
-
-        self.mods_table.setRowCount(len(mods_info))
-        for row, mod in enumerate(mods_info):
-            name_item = QTableWidgetItem(mod["name"])
-            name_item.setData(Qt.ItemDataRole.UserRole, mod["folder_path"]) 
-            self.mods_table.setItem(row, 0, name_item)
-            
-            self.mods_table.setItem(row, 1, QTableWidgetItem(mod["id"]))
-            req_str = ", ".join(mod["require"]) if mod["require"] else "Нет"
-            self.mods_table.setItem(row, 2, QTableWidgetItem(req_str))
-
-            if not mod["require"]:
-                status_item = QTableWidgetItem("✅ Ок")
-                status_item.setForeground(Qt.GlobalColor.green)
+            if not m["require"]: st = QTableWidgetItem(tr("stat_ok")); st.setForeground(Qt.GlobalColor.green)
             else:
-                missing = [r for r in mod["require"] if r not in installed_ids]
-                if not missing:
-                    status_item = QTableWidgetItem("✅ Все установлены")
-                    status_item.setForeground(Qt.GlobalColor.green)
-                else:
-                    status_item = QTableWidgetItem(f"❌ Нет: {', '.join(missing)}")
-                    status_item.setForeground(Qt.GlobalColor.red)
-            
-            self.mods_table.setItem(row, 3, status_item)
+                ms = [x for x in m["require"] if x not in ids]
+                if not ms: st = QTableWidgetItem(tr("stat_all_inst")); st.setForeground(Qt.GlobalColor.green)
+                else: st = QTableWidgetItem(tr("stat_miss", miss=", ".join(ms))); st.setForeground(Qt.GlobalColor.red)
+            self.tb.setItem(r, 3, st)
 
-    def open_mods_folder(self):
-        game_path = load_settings().get("game_mods_path")
-        if game_path and os.path.exists(game_path):
-            QDesktopServices.openUrl(QUrl.fromLocalFile(game_path))
-        else:
-            QMessageBox.warning(self, "Ошибка", "Папка модов не найдена. Проверьте настройки.")
+    def op_fld(self):
+        p = load_settings().get("game_mods_path")
+        if p and os.path.exists(p): QDesktopServices.openUrl(QUrl.fromLocalFile(p))
+        else: QMessageBox.warning(self, tr("msg_err"), tr("msg_err_folder"))
 
-    def delete_selected_mods(self):
-        selected_rows = set(item.row() for item in self.mods_table.selectedItems())
-        if not selected_rows: return
+    def del_s(self):
+        sr = set(i.row() for i in self.tb.selectedItems())
+        if not sr: return
+        if QMessageBox.question(self, tr("msg_conf"), tr("msg_conf_del", count=len(sr))) == QMessageBox.StandardButton.Yes:
+            for r in sr:
+                p = self.tb.item(r, 0).data(Qt.ItemDataRole.UserRole)
+                if p and os.path.exists(p): shutil.rmtree(p, ignore_errors=True)
+            self.ld_mods()
 
-        reply = QMessageBox.question(self, "Подтверждение", f"Удалить {len(selected_rows)} выбранных модов?", 
-                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        if reply == QMessageBox.StandardButton.Yes:
-            for row in selected_rows:
-                folder_path = self.mods_table.item(row, 0).data(Qt.ItemDataRole.UserRole)
-                if folder_path and os.path.exists(folder_path):
-                    try: shutil.rmtree(folder_path)
-                    except Exception as e: print(f"Ошибка удаления {folder_path}: {e}")
-            self.load_local_mods()
+    def del_a(self):
+        p = load_settings().get("game_mods_path")
+        if not p or not os.path.exists(p): return
+        if QMessageBox.warning(self, tr("msg_warn"), tr("msg_warn_del_all"), QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+            for f in os.listdir(p):
+                fp = os.path.join(p, f)
+                if os.path.isdir(fp): shutil.rmtree(fp, ignore_errors=True)
+            self.ld_mods()
 
-    def delete_all_mods(self):
-        game_path = load_settings().get("game_mods_path")
-        if not game_path or not os.path.exists(game_path): return
+    def op_set(self):
+        if SettingsDialog(self).exec(): self.ld_mods()
 
-        reply = QMessageBox.warning(self, "ВНИМАНИЕ", 
-            "Вы уверены, что хотите УДАЛИТЬ ВСЕ МОДЫ из папки игры?\nЭто действие нельзя отменить!", 
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        
-        if reply == QMessageBox.StandardButton.Yes:
-            for folder in os.listdir(game_path):
-                folder_path = os.path.join(game_path, folder)
-                if os.path.isdir(folder_path):
-                    try: shutil.rmtree(folder_path)
-                    except Exception as e: print(f"Ошибка удаления {folder_path}: {e}")
-            self.load_local_mods()
-
-    def open_settings(self):
-        if SettingsDialog(self).exec():
-            self.load_local_mods()
-
-    def add_to_queue(self):
+    def add_q(self):
         import re
-        match = re.search(r'id=(\d+)', self.url_bar.text())
-        if match:
-            mid = match.group(1)
-            if not self.queue_list.findItems(mid, Qt.MatchFlag.MatchExactly):
-                self.queue_list.addItem(mid)
-        else: QMessageBox.warning(self, "Ошибка", "Не найден ID мода в URL.")
+        m = re.search(r'id=(\d+)', self.url.text())
+        if m:
+            if not self.q_list.findItems(m.group(1), Qt.MatchFlag.MatchExactly): self.q_list.addItem(m.group(1))
+        else: QMessageBox.warning(self, tr("msg_err"), tr("msg_err_id"))
 
-    def start_download(self):
-        if self.queue_list.count() == 0: return
-        ids = [self.queue_list.item(i).text() for i in range(self.queue_list.count())]
-        self.queue_list.clear()
-        self.run_task(ids, False)
+    def dl_q(self):
+        if self.q_list.count() == 0: return
+        ids = [self.q_list.item(i).text() for i in range(self.q_list.count())]; self.q_list.clear(); self.rn(ids, False)
 
-    def update_all(self):
-        ws_path = load_settings().get("workshop_path")
-        if not ws_path or not os.path.exists(ws_path): return
-        ids = [d for d in os.listdir(ws_path) if os.path.isdir(os.path.join(ws_path, d)) and d.isdigit()]
-        if ids: self.run_task(ids, False)
+    def up_all(self):
+        p = load_settings().get("workshop_path")
+        if p and os.path.exists(p):
+            ids = [d for d in os.listdir(p) if os.path.isdir(os.path.join(p, d)) and d.isdigit()]
+            if ids: self.rn(ids, False)
 
-    def run_task(self, ids, install_only):
-        self.console.show()
-        self.console.log_console.clear()
-        self.worker = DownloadWorker(ids, load_settings(), install_only)
-        self.worker.log_signal.connect(self.console.append_log)
-        self.worker.progress_signal.connect(self.console.update_progress)
-        self.worker.finished_signal.connect(self.on_task_finished)
-        self.worker.start()
+    def rn(self, ids, oi):
+        self.cons.show(); self.cons.txt.clear()
+        self.w = DownloadWorker(ids, load_settings(), oi)
+        self.w.log_sig.connect(self.cons.add_log); self.w.prog_sig.connect(self.cons.update_prog); self.w.fin_sig.connect(self.fin)
+        self.w.start()
 
-    def on_task_finished(self):
-        QMessageBox.information(self, "Готово", "Все задачи выполнены!")
-        self.load_local_mods()
+    def fin(self):
+        QMessageBox.information(self, tr("msg_done"), tr("msg_all_done")); self.ld_mods()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-    window = MainWindow()
-    window.show()
+    w = MainWindow(); w.show()
     sys.exit(app.exec())
