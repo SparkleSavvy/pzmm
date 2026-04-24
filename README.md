@@ -22,5 +22,7 @@ py pzmm.py
 ```
 
 # Languages
-English ❌
-Russian ☑️
+| Name      | Supported |
+| --------- | --------- |
+| English   | ❌        |
+| Russian   | ☑️        |
