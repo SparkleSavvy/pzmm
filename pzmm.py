@@ -104,7 +104,25 @@ DEFAULT_LANG = {
     "trb_no_errors": "✅ Ошибок Lua или крашей в последней сессии не найдено! Игра работает стабильно.",
     "trb_found_errors": "⚠️ НАЙДЕНЫ ОШИБКИ ({count} шт.):\nВозможно конфликтуют моды.\n\n",
     "trb_lua_ok": "Папка Lua кэша успешно удалена. При следующем запуске игры интерфейс пересоберется с нуля.",
-    "trb_logs_ok": "Старые логи игры успешно удалены. Освобождено место на диске."
+    "trb_logs_ok": "Старые логи игры успешно удалены. Освобождено место на диске.",
+    "trb_deep_scan": "🧪 Глубокий анализ сборки",
+    "rep_title": "📊 ОТЧЁТ О СТАБИЛЬНОСТИ СБОРКИ",
+    "rep_stat": "Общая статистика",
+    "rep_mods_inst": "Установлено модов:",
+    "rep_deps": "🔗 Анализ зависимостей",
+    "rep_deps_ok": "Все зависимости удовлетворены.",
+    "rep_miss": "ОТСУТСТВУЕТ",
+    "rep_req_by": "Требуется для:",
+    "rep_conf": "⚔️ Конфликты файлов (Перезапись скриптов)",
+    "rep_conf_desc": "Эти моды изменяют одни и те же системные файлы. Тот, что загрузится последним, сломает работу предыдущего:",
+    "rep_conf_ok": "Конфликтов между файлами модов не обнаружено.",
+    "rep_file": "Файл:",
+    "rep_mods": "Моды:",
+    "rep_logs": "📜 Анализ логов (console.txt)",
+    "rep_errs": "Критических ошибок (ERROR/Exception):",
+    "rep_warns": "Предупреждений (WARN):",
+    "rep_log_ok": "Лог чист, игра работает стабильно.",
+    "rep_wait": "Проводится глубокое сканирование файлов. Пожалуйста, подождите..."
 }
 
 LANG_DICT = {}
@@ -387,17 +405,21 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(t, tr("tab_mods"))
         self.ld_mods()
 
-    # --- Вкладка 3: Траблшутинг (НОВАЯ) ---
+# --- Вкладка 3: Траблшутинг ---
     def init_trouble_tab(self):
         t = QWidget()
         lay = QVBoxLayout(t)
         
-        # Кнопки быстрых действий
         actions_lay = QHBoxLayout()
         
         btn_analyze = QPushButton(tr("trb_analyze"))
         btn_analyze.setObjectName("ActionBtn")
         btn_analyze.clicked.connect(self.analyze_logs)
+
+        # НОВАЯ КНОПКА ГЛУБОКОГО АНАЛИЗА
+        btn_deep_scan = QPushButton(tr("trb_deep_scan"))
+        btn_deep_scan.setStyleSheet("background-color: #cba6f7; color: #11111b; font-weight: bold; padding: 8px 15px; border-radius: 4px;")
+        btn_deep_scan.clicked.connect(self.run_deep_analysis)
         
         btn_clear_lua = QPushButton(tr("trb_clear_lua"))
         btn_clear_lua.setObjectName("WarnBtn")
@@ -408,11 +430,11 @@ class MainWindow(QMainWindow):
         btn_clear_logs.clicked.connect(self.clear_game_logs)
         
         actions_lay.addWidget(btn_analyze)
+        actions_lay.addWidget(btn_deep_scan)
         actions_lay.addWidget(btn_clear_lua)
         actions_lay.addWidget(btn_clear_logs)
         actions_lay.addStretch()
         
-        # Окно вывода логов
         self.trouble_console = QTextEdit()
         self.trouble_console.setReadOnly(True)
         self.trouble_console.setStyleSheet("background-color: #11111b; color: #cdd6f4; font-family: Consolas; font-size: 13px;")
@@ -423,8 +445,116 @@ class MainWindow(QMainWindow):
         
         self.tabs.addTab(t, tr("tab_trouble"))
 
-    # --- Логика Траблшутинга ---
+    # --- ЛОГИКА ГЛУБОКОГО АНАЛИЗА (НОВОЕ) ---
+    def run_deep_analysis(self):
+        self.trouble_console.clear()
+        self.trouble_console.append(f"<span style='color: yellow;'>{tr('rep_wait')}</span>")
+        QApplication.processEvents() # Обновляем UI, чтобы текст появился до начала зависания парсера
+        
+        game_path = load_settings().get("game_mods_path")
+        if not game_path or not os.path.exists(game_path):
+            self.trouble_console.append("<span style='color: red;'>Папка модов не найдена!</span>")
+            return
+
+        mods_installed = {} # id -> name
+        dependencies_map = {} # req_id -> [mod_name1, mod_name2]
+        file_conflicts_map = {} # media_path -> [mod_name1, mod_name2]
+
+        # 1. Сбор информации о модах
+        for folder in os.listdir(game_path):
+            folder_path = os.path.join(game_path, folder)
+            if not os.path.isdir(folder_path): continue
+            
+            info_path = os.path.join(folder_path, "mod.info")
+            if os.path.exists(info_path):
+                data = parse_mod_info(info_path)
+                mod_id = data["id"]
+                mod_name = data["name"]
+                
+                if mod_id:
+                    mods_installed[mod_id] = mod_name
+                    # Записываем, кто что требует
+                    for req in data["require"]:
+                        if req not in dependencies_map:
+                            dependencies_map[req] = []
+                        dependencies_map[req].append(mod_name)
+            
+            # 2. Сканирование файлов (Конфликты Lua/Scripts)
+            media_path = os.path.join(folder_path, "media")
+            if os.path.exists(media_path):
+                for root, dirs, files in os.walk(media_path):
+                    for file in files:
+                        # Нас интересуют только скрипты и луа, текстуры и звуки не конфликтуют критично
+                        if file.endswith(('.lua', '.txt', '.xml')):
+                            rel_path = os.path.relpath(os.path.join(root, file), media_path)
+                            # Игнорируем специфичные для мода файлы, ищем те, что лежат в общих папках (например UI)
+                            if "client" in rel_path or "server" in rel_path or "scripts" in rel_path:
+                                if rel_path not in file_conflicts_map:
+                                    file_conflicts_map[rel_path] = []
+                                file_conflicts_map[rel_path].append(mod_name if 'mod_name' in locals() else folder)
+
+        # Анализ логов
+        log_path = os.path.expanduser(r"~\Zomboid\console.txt")
+        errors = 0
+        warns = 0
+        if os.path.exists(log_path):
+            with open(log_path, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    if "ERROR:" in line or "Exception" in line: errors += 1
+                    elif "WARN:" in line: warns += 1
+
+        # --- ФОРМИРОВАНИЕ ОТЧЁТА ---
+        report = []
+        report.append(f"<h2 style='color: #89b4fa; text-align: center;'>{tr('rep_title')}</h2>")
+        
+        # Статистика
+        report.append(f"<h3 style='color: #cba6f7;'>{tr('rep_stat')}</h3>")
+        report.append(f"<ul><li>{tr('rep_mods_inst')} <b>{len(mods_installed)}</b></li></ul><br>")
+
+        # Зависимости
+        report.append(f"<h3 style='color: #cba6f7;'>{tr('rep_deps')}</h3>")
+        missing_count = 0
+        for req_id, needed_by in dependencies_map.items():
+            if req_id not in mods_installed:
+                missing_count += 1
+                report.append(f"<span style='color: #f38ba8;'><b>❌ {tr('rep_miss')}: {req_id}</b></span>")
+                report.append(f"<span style='color: gray;'>   {tr('rep_req_by')} {', '.join(needed_by)}</span><br>")
+        if missing_count == 0:
+            report.append(f"<span style='color: #a6e3a1;'>{tr('rep_deps_ok')}</span><br><br>")
+        else: report.append("<br>")
+
+        # Конфликты
+        report.append(f"<h3 style='color: #cba6f7;'>{tr('rep_conf')}</h3>")
+        conflicts_count = 0
+        report.append(f"<span style='color: gray;'>{tr('rep_conf_desc')}</span><br>")
+        for file_path, mods in file_conflicts_map.items():
+            if len(mods) > 1:
+                # Фильтр: если моды называются похоже (например Mod_V1 и Mod_V2), выводим
+                # Исключаем моды от одного автора, если они задуманы так (опционально)
+                conflicts_count += 1
+                report.append(f"<span style='color: #f9e2af;'>⚠️ {tr('rep_file')} <b>{file_path}</b></span>")
+                report.append(f"<span style='color: #eba0ac;'>   {tr('rep_mods')} {', '.join(mods)}</span><br>")
+        
+        if conflicts_count == 0:
+            report.append(f"<span style='color: #a6e3a1;'>{tr('rep_conf_ok')}</span><br><br>")
+        else: report.append("<br>")
+
+        # Логи
+        report.append(f"<h3 style='color: #cba6f7;'>{tr('rep_logs')}</h3>")
+        if errors > 0 or warns > 0:
+            report.append(f"<span style='color: #f38ba8;'>❌ {tr('rep_errs')} <b>{errors}</b></span><br>")
+            report.append(f"<span style='color: #f9e2af;'>⚠️ {tr('rep_warns')} <b>{warns}</b></span><br>")
+        else:
+            report.append(f"<span style='color: #a6e3a1;'>{tr('rep_log_ok')}</span>")
+
+        # Вывод
+        self.trouble_console.clear()
+        self.trouble_console.setHtml("".join(report))
+
+
+    # --- Старые функции траблшутинга (остаются) ---
     def analyze_logs(self):
+        # ... (Код из предыдущего ответа)
         self.trouble_console.clear()
         zomboid_dir = os.path.expanduser(r"~\Zomboid")
         console_path = os.path.join(zomboid_dir, "console.txt")
@@ -435,12 +565,10 @@ class MainWindow(QMainWindow):
             
         errors_found = []
         try:
-            # Читаем только последние 10000 строк, чтобы не повесить UI
             with open(console_path, 'r', encoding='utf-8', errors='replace') as f:
                 lines = f.readlines()[-10000:]
                 
             for line in lines:
-                # Ищем критические маркеры ошибок PZ
                 if "ERROR:" in line or "Exception" in line or "STACK TRACE" in line or "failed to load" in line:
                     errors_found.append(line.strip())
                     
@@ -448,8 +576,7 @@ class MainWindow(QMainWindow):
                 self.trouble_console.append(f"<span style='color: #a6e3a1;'>{tr('trb_no_errors')}</span>")
             else:
                 self.trouble_console.append(f"<span style='color: #f38ba8; font-weight: bold;'>{tr('trb_found_errors', count=len(errors_found))}</span>")
-                # Выводим уникальные ошибки (чтобы не спамить одинаковыми)
-                unique_errors = list(dict.fromkeys(errors_found))[:50] # Показываем макс 50
+                unique_errors = list(dict.fromkeys(errors_found))[:50]
                 for err in unique_errors:
                     self.trouble_console.append(f"<span style='color: #eba0ac;'>- {err}</span>")
                     
