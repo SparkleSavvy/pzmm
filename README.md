@@ -20,3 +20,7 @@ pip install PyQt6 PyQt6-WebEngine requests
 ```
 py pzmm.py
 ```
+
+# Languages
+English ❌
+Russian ☑️
