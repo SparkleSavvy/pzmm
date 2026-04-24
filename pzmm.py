@@ -133,18 +133,20 @@ def tr(key, **kwargs):
     except Exception: return text
 
 def load_language(lang_code="ru"):
-    os.makedirs(LOCALES_DIR, exist_ok=True)
-    ru_path = os.path.join(LOCALES_DIR, "ru.json")
+    base_locales = os.path.join(get_base_dir(), LOCALES_DIR)
+    os.makedirs(base_locales, exist_ok=True)
+    ru_path = os.path.join(base_locales, "ru.json")
     if not os.path.exists(ru_path):
         with open(ru_path, 'w', encoding='utf-8') as f:
             json.dump(DEFAULT_LANG, f, indent=4, ensure_ascii=False)
             
-    lang_path = os.path.join(LOCALES_DIR, f"{lang_code}.json")
+    lang_path = os.path.join(base_locales, f"{lang_code}.json")
     if os.path.exists(lang_path):
         with open(lang_path, 'r', encoding='utf-8') as f:
             global LANG_DICT
             LANG_DICT = json.load(f)
-    else: LANG_DICT = DEFAULT_LANG
+    else:
+        LANG_DICT = DEFAULT_LANG
 
 def get_available_languages():
     if not os.path.exists(LOCALES_DIR): return ["ru"]
